@@ -2,11 +2,9 @@ using ProcessingSystem.Config;
 using ProcessingSystem.Core;
 using ProcessingSystem.Models;
 
-// -- Učitavanje konfiguracije --
 var config = ConfigLoader.Load("SystemConfig.xml");
 var system = new ProcessingSystem.Core.ProcessingSystem(config.WorkerCount, config.MaxQueueSize);
 
-// -- Pretplate na evente --
 system.JobCompleted += async (job, result) =>
 {
     await ProcessingSystem.Core.ProcessingSystem.LogEvent("COMPLETED", job.Id, result);
@@ -19,7 +17,6 @@ system.JobFailed += async (job) =>
     Console.WriteLine($"[FAILED] {job.Id}");
 };
 
-// -- Inicijalni poslovi iz XML --
 foreach (var job in config.InitialJobs)
 {
     var handle = system.Submit(job);
@@ -27,7 +24,6 @@ foreach (var job in config.InitialJobs)
         Console.WriteLine($"[REJECTED] {job.Id} (queue full or duplicate)");
 }
 
-// -- Producer niti --
 var random = new Random();
 var jobTypes = Enum.GetValues<JobType>();
 var producers = new List<Thread>();

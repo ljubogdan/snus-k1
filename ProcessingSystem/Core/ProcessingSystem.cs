@@ -4,34 +4,26 @@ namespace ProcessingSystem.Core;
 
 public class ProcessingSystem
 {
-    // -- Konfiguracija --
     private readonly int _maxQueueSize;
     private readonly int _workerCount;
 
-    // -- Thread-safe priority queue --
-    // PriorityQueue je NOT thread-safe, koristimo lock
     private readonly PriorityQueue<(Job job, TaskCompletionSource<int> tcs), int> _queue = new();
     private readonly object _queueLock = new();
     private readonly SemaphoreSlim _queueSignal = new(0);
 
-    // -- Idempotency --
     private readonly HashSet<Guid> _seenIds = [];
     private readonly object _seenLock = new();
 
-    // -- Statistika (za izveštaj) --
     private readonly List<(Job job, int result, TimeSpan duration, bool failed)> _completed = [];
     private readonly object _statsLock = new();
 
-    // -- Events --
     public event Func<Job, int, Task>? JobCompleted;
     public event Func<Job, Task>? JobFailed;
 
-    // -- Izveštaj (ring buffer 10 fajlova) --
     private readonly Timer _reportTimer;
     private int _reportIndex = 0;
     private const int MaxReports = 10;
 
-    // -- CancellationToken za shutdown --
     private readonly CancellationTokenSource _cts = new();
 
     public ProcessingSystem(int workerCount, int maxQueueSize)
@@ -39,20 +31,14 @@ public class ProcessingSystem
         _workerCount = workerCount;
         _maxQueueSize = maxQueueSize;
 
-        // Pokretanje worker niti
         for (int i = 0; i < _workerCount; i++)
             Task.Run(() => WorkerLoop(_cts.Token));
 
-        // Minutni izveštaj
         _reportTimer = new Timer(_ => GenerateReport(), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
     }
 
-    // ----------------------------------------------------------------
-    // Submit
-    // ----------------------------------------------------------------
     public JobHandle? Submit(Job job)
     {
-        // Idempotency check
         lock (_seenLock)
         {
             if (_seenIds.Contains(job.Id))
@@ -66,7 +52,6 @@ public class ProcessingSystem
         {
             if (_queue.Count >= _maxQueueSize)
             {
-                // Ukloni iz seen jer nije dodat
                 lock (_seenLock) _seenIds.Remove(job.Id);
                 return null;
             }
@@ -78,9 +63,6 @@ public class ProcessingSystem
         return new JobHandle { Id = job.Id, Result = tcs.Task };
     }
 
-    // ----------------------------------------------------------------
-    // Worker loop
-    // ----------------------------------------------------------------
     private async Task WorkerLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -98,9 +80,6 @@ public class ProcessingSystem
         }
     }
 
-    // ----------------------------------------------------------------
-    // Obrada sa retry logikom
-    // ----------------------------------------------------------------
     private async Task ProcessWithRetry(Job job, TaskCompletionSource<int> tcs)
     {
         const int maxAttempts = 3;
@@ -112,8 +91,7 @@ public class ProcessingSystem
             try
             {
                 using var cts = new CancellationTokenSource(timeoutMs);
-                var workTask = ExecuteJob(job, cts.Token);
-                var result = await workTask.WaitAsync(cts.Token);
+                var result = await ExecuteJob(job, cts.Token).WaitAsync(cts.Token);
                 sw.Stop();
 
                 lock (_statsLock)
@@ -142,14 +120,10 @@ public class ProcessingSystem
                     tcs.TrySetException(new Exception($"Job {job.Id} aborted after {maxAttempts} attempts."));
                     return;
                 }
-                // Naredni pokušaj
             }
         }
     }
 
-    // ----------------------------------------------------------------
-    // Izvršavanje job-a po tipu — TODO implementirati
-    // ----------------------------------------------------------------
     private Task<int> ExecuteJob(Job job, CancellationToken ct)
     {
         return job.Type switch
@@ -162,19 +136,14 @@ public class ProcessingSystem
 
     private Task<int> ExecutePrime(Job job, CancellationToken ct)
     {
-        // TODO: parsirati payload, paralelno izračunati broj prostih
         throw new NotImplementedException();
     }
 
     private Task<int> ExecuteIO(Job job, CancellationToken ct)
     {
-        // TODO: parsirati payload (delay), Thread.Sleep, random 0-100
         throw new NotImplementedException();
     }
 
-    // ----------------------------------------------------------------
-    // Dodatne metode
-    // ----------------------------------------------------------------
     public IEnumerable<Job> GetTopJobs(int n)
     {
         lock (_queueLock)
@@ -200,9 +169,6 @@ public class ProcessingSystem
             return _completed.FirstOrDefault(x => x.job.Id == id).job;
     }
 
-    // ----------------------------------------------------------------
-    // Logging
-    // ----------------------------------------------------------------
     private static readonly SemaphoreSlim _logLock = new(1, 1);
 
     public static async Task LogEvent(string status, Guid jobId, int result)
@@ -221,12 +187,8 @@ public class ProcessingSystem
         finally { _logLock.Release(); }
     }
 
-    // ----------------------------------------------------------------
-    // Izveštaj
-    // ----------------------------------------------------------------
     private void GenerateReport()
     {
-        // TODO: LINQ izveštaj → XML, ring buffer
         throw new NotImplementedException();
     }
 
