@@ -136,12 +136,45 @@ public class ProcessingSystem
 
     private Task<int> ExecutePrime(Job job, CancellationToken ct)
     {
-        throw new NotImplementedException();
+        var parts = job.Payload.Split(',');
+        int limit = int.Parse(parts[0].Split(':')[1].Replace("_", ""));
+        int threads = Math.Clamp(int.Parse(parts[1].Split(':')[1].Replace("_", "")), 1, 8);
+
+        return Task.Run(() =>
+        {
+            int count = 0;
+            var options = new ParallelOptions { MaxDegreeOfParallelism = threads, CancellationToken = ct };
+
+            Parallel.For(2, limit + 1, options, () => 0, (n, state, local) =>
+            {
+                if (IsPrime(n)) local++;
+                return local;
+            }, local => Interlocked.Add(ref count, local));
+
+            return count;
+        }, ct);
+    }
+
+    private static bool IsPrime(int n)
+    {
+        if (n < 2) return false;
+        if (n == 2) return true;
+        if (n % 2 == 0) return false;
+        for (int i = 3; i * i <= n; i += 2)
+            if (n % i == 0) return false;
+        return true;
     }
 
     private Task<int> ExecuteIO(Job job, CancellationToken ct)
     {
-        throw new NotImplementedException();
+        int delay = int.Parse(job.Payload.Split(':')[1].Replace("_", ""));
+
+        return Task.Run(() =>
+        {
+            Thread.Sleep(delay);
+            ct.ThrowIfCancellationRequested();
+            return Random.Shared.Next(0, 101);
+        }, ct);
     }
 
     public IEnumerable<Job> GetTopJobs(int n)
@@ -189,7 +222,27 @@ public class ProcessingSystem
 
     private void GenerateReport()
     {
-        throw new NotImplementedException();
+        List<(Job job, int result, TimeSpan duration, bool failed)> snapshot;
+        lock (_statsLock)
+            snapshot = [.. _completed];
+
+        var byType = snapshot.GroupBy(x => x.job.Type);
+
+        var report = new System.Xml.Linq.XElement("Report",
+            new System.Xml.Linq.XAttribute("GeneratedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")),
+            byType.Select(g => new System.Xml.Linq.XElement("JobType",
+                new System.Xml.Linq.XAttribute("Type", g.Key),
+                new System.Xml.Linq.XElement("Completed", g.Count(x => !x.failed)),
+                new System.Xml.Linq.XElement("Failed", g.Count(x => x.failed)),
+                new System.Xml.Linq.XElement("AvgDurationMs",
+                    Math.Round(g.Where(x => !x.failed).Select(x => x.duration.TotalMilliseconds).DefaultIfEmpty(0).Average(), 2))
+            )).OrderBy(x => x.Attribute("Type")!.Value)
+        );
+
+        string fileName = $"report_{_reportIndex % MaxReports}.xml";
+        _reportIndex++;
+
+        new System.Xml.Linq.XDocument(report).Save(fileName);
     }
 
     public void Shutdown()
